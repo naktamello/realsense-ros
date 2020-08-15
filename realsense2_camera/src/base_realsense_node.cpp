@@ -1452,6 +1452,46 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
     }
 }
 
+void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t)
+{
+        float upixel[2];
+        float upoint[3];
+        float udist;
+        rs2_intrinsics intr = depth.get_profile().as<rs2::video_stream_profile>().get_intrinsics(); // Calibration data
+        pcl::PointCloud<pcl::PointXYZRGB> output;
+        pcl::PointXYZRGB tmp_point;
+        rs2::depth_frame depth_frame_used_in_deprojection = depth;
+
+        for (int i = 260; i <= 380; i++)
+			{
+				for (int j = 180; j <= 300; j++)
+				{
+                    auto ptr = (uint8_t*)color.get_data();
+                    auto stride = color.as<rs2::video_frame>().get_stride_in_bytes();
+					upixel[0] = i;
+					upixel[1] = j;
+					udist = depth_frame_used_in_deprojection.get_distance(upixel[0], upixel[1]);
+					rs2_deproject_pixel_to_point(upoint, &intr, upixel, udist);
+					tmp_point.x = upoint[0];
+					tmp_point.y = upoint[1];
+					tmp_point.z = upoint[2];
+                    tmp_point.r = int(ptr[j * stride + (3*i)]);
+                    tmp_point.g = int(ptr[j * stride + (3*i)+1]);
+                    tmp_point.b = int(ptr[j * stride + (3*i)+2]);
+                    output.push_back(tmp_point);
+                }
+            }
+        pcl::toROSMsg( output, _cropped_pointcloud );
+        _cropped_pointcloud.header.stamp = t;
+        _cropped_pointcloud.header.frame_id = _optical_frame_id[DEPTH];
+        _cropped_pointcloud.height = 1;
+        _cropped_pointcloud.is_dense = true;
+        // sensor_msgs::PointCloud2Modifier modifier(_cropped_pointcloud);
+        // modifier.setPointCloud2FieldsByString(1, "xyz");
+        _cropped_publisher.publish(_cropped_pointcloud);
+
+}
+
 void BaseRealSenseNode::frame_callback(rs2::frame frame)
 {
     _synced_imu_publisher->Pause();
@@ -1560,7 +1600,11 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                     is_depth_arrived = true;
                 }
             }
-
+            rs2::align align_to_depth(RS2_STREAM_DEPTH);
+            auto aligned = align_to_depth.process(frameset);
+            rs2::frame depth = aligned.get_depth_frame();
+            rs2::frame color = aligned.get_color_frame();
+            publishCropped(depth, color, t);
             for (auto it = frames_to_publish.begin(); it != frames_to_publish.end(); ++it)
             {
                 auto f = (*it);
@@ -2205,21 +2249,6 @@ void BaseRealSenseNode::publishFrame(rs2::frame f, const ros::Time& t,
     if (f.is<rs2::depth_frame>())
     {
         image = fix_depth_scale(image, _depth_scaled_image[stream]);
-        pcl::PointCloud<pcl::PointXYZ> output;
-        _cropped_pointcloud.header.stamp = t;
-        _cropped_pointcloud.header.frame_id = _optical_frame_id[DEPTH];
-        // _cropped_pointcloud.width = _valid_pc_indices.size();
-        _cropped_pointcloud.height = 1;
-        _cropped_pointcloud.is_dense = true;
-        sensor_msgs::PointCloud2Modifier modifier(_cropped_pointcloud);
-        modifier.setPointCloud2FieldsByString(1, "xyz");
-        for (int i = 260; i <= 380; i++)
-			{
-				for (int j = 180; j <= 300; j++)
-				{
-                    // _cropped_pointcloud.data
-                }
-            }
     }
 
     ++(seq[stream]);

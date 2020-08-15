@@ -203,6 +203,7 @@ namespace realsense2_camera
         void publishDynamicTransforms();
         void publishIntrinsics();
         void runFirstFrameInitialization(rs2_stream stream_type);
+        void publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t);
         void publishPointCloud(rs2::points f, const ros::Time& t, const rs2::frameset& frameset);
         Extrinsics rsExtrinsicsToMsg(const rs2_extrinsics& extrinsics, const std::string& frame_id) const;
 
