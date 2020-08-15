@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cctype>
 #include <mutex>
+#include <pcl/point_types.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 using namespace realsense2_camera;
 using namespace ddynamic_reconfigure;
@@ -822,6 +824,7 @@ void BaseRealSenseNode::setupPublishers()
             if (stream == DEPTH && _pointcloud)
             {
                 _pointcloud_publisher = _node_handle.advertise<sensor_msgs::PointCloud2>("depth/color/points", 1);
+                _cropped_publisher = _node_handle.advertise<sensor_msgs::PointCloud2>("depth/color/cropped", 1);
             }
         }
     }
@@ -2202,6 +2205,21 @@ void BaseRealSenseNode::publishFrame(rs2::frame f, const ros::Time& t,
     if (f.is<rs2::depth_frame>())
     {
         image = fix_depth_scale(image, _depth_scaled_image[stream]);
+        pcl::PointCloud<pcl::PointXYZ> output;
+        _cropped_pointcloud.header.stamp = t;
+        _cropped_pointcloud.header.frame_id = _optical_frame_id[DEPTH];
+        // _cropped_pointcloud.width = _valid_pc_indices.size();
+        _cropped_pointcloud.height = 1;
+        _cropped_pointcloud.is_dense = true;
+        sensor_msgs::PointCloud2Modifier modifier(_cropped_pointcloud);
+        modifier.setPointCloud2FieldsByString(1, "xyz");
+        for (int i = 260; i <= 380; i++)
+			{
+				for (int j = 180; j <= 300; j++)
+				{
+                    // _cropped_pointcloud.data
+                }
+            }
     }
 
     ++(seq[stream]);

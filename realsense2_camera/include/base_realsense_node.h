@@ -284,6 +284,7 @@ namespace realsense2_camera
         std::map<stream_index_pair, std::vector<rs2::stream_profile>> _enabled_profiles;
 
         ros::Publisher _pointcloud_publisher;
+        ros::Publisher _cropped_publisher;
         ros::Time _ros_time_base;
         bool _sync_frames;
         bool _pointcloud;
@@ -318,6 +319,7 @@ namespace realsense2_camera
         const std::string _namespace;
 
         sensor_msgs::PointCloud2 _msg_pointcloud;
+        sensor_msgs::PointCloud2 _cropped_pointcloud;
         std::vector< unsigned int > _valid_pc_indices;
 
     };//end class

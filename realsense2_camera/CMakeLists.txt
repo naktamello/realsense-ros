@@ -4,7 +4,7 @@ add_compile_options(-std=c++11)
 
 option(BUILD_WITH_OPENMP "Use OpenMP" OFF)
 option(SET_USER_BREAK_AT_STARTUP "Set user wait point in startup (for debug)" OFF)
-
+find_package(PCL 1.8 REQUIRED COMPONENTS core features segmentation sample_consensus filters io surface search)
 find_package(catkin REQUIRED COMPONENTS
     message_generation
     nav_msgs
@@ -70,6 +70,7 @@ include_directories(
     include
     ${realsense2_INCLUDE_DIR}
     ${catkin_INCLUDE_DIRS}
+    ${PCL_INCLUDE_DIRS}
     )
 
 # RealSense ROS Node
@@ -77,6 +78,7 @@ catkin_package(
     LIBRARIES ${PROJECT_NAME}
     CATKIN_DEPENDS message_runtime roscpp sensor_msgs std_msgs
     nodelet
+    pcl_conversions
     cv_bridge
     image_transport
     ddynamic_reconfigure
@@ -101,6 +103,7 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     ${realsense2_LIBRARY}
+    ${PCL_LIBRARIES}
     ${catkin_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
     )
