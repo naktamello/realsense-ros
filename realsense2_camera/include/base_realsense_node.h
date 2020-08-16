@@ -207,7 +207,7 @@ namespace realsense2_camera
         void publishIntrinsics();
         void runFirstFrameInitialization(rs2_stream stream_type);
         void bbCallback(const darknet_ros_msgs::BoundingBoxesConstPtr& bbs);
-        void publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t);
+        void publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t, const struct rs2_extrinsics * extrin);
         void publishPointCloud(rs2::points f, const ros::Time& t, const rs2::frameset& frameset);
         Extrinsics rsExtrinsicsToMsg(const rs2_extrinsics& extrinsics, const std::string& frame_id) const;
 

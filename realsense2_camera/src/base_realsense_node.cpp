@@ -1462,7 +1462,7 @@ void BaseRealSenseNode::bbCallback(const darknet_ros_msgs::BoundingBoxesConstPtr
     }
 }
 
-void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t)
+void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t, const struct rs2_extrinsics * extrin)
 {
         float upixel[2];
         float upoint[3];
@@ -1471,55 +1471,44 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
         pcl::PointCloud<pcl::PointXYZRGB> output;
         pcl::PointXYZRGB tmp_point;
         rs2::depth_frame depth_frame_used_in_deprojection = depth;
-        float depth_scale = 0;
-        rs2::stream_profile depth_profile;
-        rs2::stream_profile color_profile;
-        depth_profile = depth_frame_used_in_deprojection.get_profile();
-        color_profile = color.get_profile();
-        auto depth_intrin = depth_profile.as<rs2::video_stream_profile>().get_intrinsics();
-        auto color_intrin = color_profile.as<rs2::video_stream_profile>().get_intrinsics();
-        auto depth_extrin_to_color = depth_profile.as<rs2::video_stream_profile>().get_extrinsics_to(color_profile);
-        auto color_extrin_to_depth = color_profile.as<rs2::video_stream_profile>().get_extrinsics_to(depth_profile);
         if (!_box_received){
             return;
         }
-        float to_pixel[2];
-        float from_pixel[2];
-        from_pixel[0] = _bounding_box.xmin;
-        from_pixel[1] = _bounding_box.ymin;
-        ROS_WARN_STREAM("from_pixel[0]:"<<from_pixel[0]<<" / from_pixel[1]:"<<from_pixel[1]);
-        rs2_project_color_pixel_to_depth_pixel(to_pixel, reinterpret_cast<const uint16_t*>(depth.get_data()), depth_scale, 0.1, 100,
-                &depth_intrin, &color_intrin,
-                &color_extrin_to_depth, &depth_extrin_to_color, from_pixel);
-        auto xmin = static_cast<int>(to_pixel[0]);
-        auto ymin = static_cast<int>(to_pixel[1]);
-        from_pixel[0] = _bounding_box.xmax;
-        from_pixel[1] = _bounding_box.ymax;
-        rs2_project_color_pixel_to_depth_pixel(to_pixel, reinterpret_cast<const uint16_t*>(depth.get_data()), depth_scale, 0.1, 100,
-                &depth_intrin, &color_intrin,
-                &color_extrin_to_depth, &depth_extrin_to_color, from_pixel);
-        auto xmax = static_cast<int>(to_pixel[0]);
-        auto ymax = static_cast<int>(to_pixel[1]);
-        ROS_WARN_STREAM("xmin:"<<xmin<<" / ymin:"<<ymin<<"; xmax:"<<xmax<<" / ymax:"<<ymax);
-        for (int i = xmin; i <= xmax; i++)
-			{
-				for (int j = ymin; j <= ymax; j++)
-				{
-                    auto ptr = (uint8_t*)color.get_data();
-                    auto stride = color.as<rs2::video_frame>().get_stride_in_bytes();
-					upixel[0] = i;
-					upixel[1] = j;
-					udist = depth_frame_used_in_deprojection.get_distance(upixel[0], upixel[1]);
-					rs2_deproject_pixel_to_point(upoint, &intr, upixel, udist);
-					tmp_point.x = upoint[0];
-					tmp_point.y = upoint[1];
-					tmp_point.z = upoint[2];
-                    tmp_point.r = int(ptr[j * stride + (3*i)]);
-                    tmp_point.g = int(ptr[j * stride + (3*i)+1]);
-                    tmp_point.b = int(ptr[j * stride + (3*i)+2]);
-                    output.push_back(tmp_point);
+
+        auto xmin = _bounding_box.xmin;
+        auto ymin = _bounding_box.ymin;
+        auto xmax = _bounding_box.xmax;
+        auto ymax = _bounding_box.ymax;
+        float from_point[3];
+        float to_point[3];
+        try{
+            for (int i = xmin; i <= xmax; i++)
+                {
+                    for (int j = ymin; j <= ymax; j++)
+                    {
+                        auto ptr = (uint8_t*)color.get_data();
+                        auto stride = color.as<rs2::video_frame>().get_stride_in_bytes();
+                        upixel[0] = i;
+                        upixel[1] = j;
+                        udist = depth_frame_used_in_deprojection.get_distance(upixel[0], upixel[1]);
+                        rs2_deproject_pixel_to_point(upoint, &intr, upixel, udist);
+                        from_point[0] = upoint[0];
+                        from_point[1] = upoint[1];
+                        from_point[2] = upoint[2];
+                        rs2_transform_point_to_point(to_point, extrin, from_point);
+                        tmp_point.x = to_point[0];
+                        tmp_point.y = to_point[1];
+                        tmp_point.z = to_point[2];
+                        tmp_point.r = int(ptr[j * stride + (3*i)]);
+                        tmp_point.g = int(ptr[j * stride + (3*i)+1]);
+                        tmp_point.b = int(ptr[j * stride + (3*i)+2]);
+                        output.push_back(tmp_point);
+                    }
                 }
-            }
+        }
+        catch (...){
+
+        }
         pcl::toROSMsg( output, _cropped_pointcloud );
         _cropped_pointcloud.header.stamp = t;
         _cropped_pointcloud.header.frame_id = _optical_frame_id[DEPTH];
@@ -1639,11 +1628,18 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                     is_depth_arrived = true;
                 }
             }
-            rs2::align align_to_depth(RS2_STREAM_DEPTH);
-            auto aligned = align_to_depth.process(frameset);
+            rs2::stream_profile depth_profile;
+            rs2::stream_profile color_profile;
+            depth_profile = depth_frame.get_profile();
+            color_profile = frameset.get_color_frame().get_profile();
+            auto color_extrin_to_depth = color_profile.as<rs2::video_stream_profile>().get_extrinsics_to(depth_profile);
+            // auto depth_extrin_to_color = depth_profile.as<rs2::video_stream_profile>().get_extrinsics_to(color_profile);
+            // rs2::align align_to_depth(RS2_STREAM_DEPTH);
+            rs2::align align_to_color(RS2_STREAM_COLOR);
+            auto aligned = align_to_color.process(frameset);
             rs2::frame depth = aligned.get_depth_frame();
             rs2::frame color = aligned.get_color_frame();
-            publishCropped(depth, color, t);
+            publishCropped(depth, color, t, &color_extrin_to_depth);
             for (auto it = frames_to_publish.begin(); it != frames_to_publish.end(); ++it)
             {
                 auto f = (*it);
