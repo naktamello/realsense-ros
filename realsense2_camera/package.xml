@@ -22,6 +22,7 @@
   <depend>genmsg</depend>
   <depend>roscpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>darknet_ros_msgs</depend>
   <depend>std_msgs</depend>
   <depend>message_runtime</depend>
   <depend>tf</depend>

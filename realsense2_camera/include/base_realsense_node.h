@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../include/realsense_node_factory.h"
+#include "../include/constants.h"
 #include <ddynamic_reconfigure/ddynamic_reconfigure.h>
 
 #include <diagnostic_updater/diagnostic_updater.h>
@@ -16,6 +17,8 @@
 #include <tf/transform_broadcaster.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <condition_variable>
+#include <darknet_ros_msgs/BoundingBoxes.h>
+#include <darknet_ros_msgs/BoundingBox.h>
 
 #include <queue>
 #include <mutex>
@@ -203,6 +206,7 @@ namespace realsense2_camera
         void publishDynamicTransforms();
         void publishIntrinsics();
         void runFirstFrameInitialization(rs2_stream stream_type);
+        void bbCallback(const darknet_ros_msgs::BoundingBoxesConstPtr& bbs);
         void publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t);
         void publishPointCloud(rs2::points f, const ros::Time& t, const rs2::frameset& frameset);
         Extrinsics rsExtrinsicsToMsg(const rs2_extrinsics& extrinsics, const std::string& frame_id) const;
@@ -322,6 +326,9 @@ namespace realsense2_camera
         sensor_msgs::PointCloud2 _msg_pointcloud;
         sensor_msgs::PointCloud2 _cropped_pointcloud;
         std::vector< unsigned int > _valid_pc_indices;
+        bool _box_received = false;
+        darknet_ros_msgs::BoundingBox _bounding_box;
+        ros::Subscriber _bb_subscriber;
 
     };//end class
 

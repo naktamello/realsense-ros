@@ -211,6 +211,7 @@ void BaseRealSenseNode::publishTopics()
     publishIntrinsics();
     startMonitoring();
     ROS_INFO_STREAM("RealSense Node Is Up!");
+    _bb_subscriber = _node_handle.subscribe("/darknet_ros/bounding_boxes", 1, &BaseRealSenseNode::bbCallback, this);
 }
 
 void BaseRealSenseNode::runFirstFrameInitialization(rs2_stream stream_type)
@@ -1452,6 +1453,15 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
     }
 }
 
+void BaseRealSenseNode::bbCallback(const darknet_ros_msgs::BoundingBoxesConstPtr& bbs)
+{
+    ROS_DEBUG_STREAM("bbCallback:" << bbs->bounding_boxes.size());
+    if (bbs->bounding_boxes.size() > 0){
+    _bounding_box = bbs->bounding_boxes[0];
+    _box_received = 1;
+    }
+}
+
 void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const ros::Time& t)
 {
         float upixel[2];
@@ -1461,10 +1471,39 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
         pcl::PointCloud<pcl::PointXYZRGB> output;
         pcl::PointXYZRGB tmp_point;
         rs2::depth_frame depth_frame_used_in_deprojection = depth;
-
-        for (int i = 260; i <= 380; i++)
+        float depth_scale = 0;
+        rs2::stream_profile depth_profile;
+        rs2::stream_profile color_profile;
+        depth_profile = depth_frame_used_in_deprojection.get_profile();
+        color_profile = color.get_profile();
+        auto depth_intrin = depth_profile.as<rs2::video_stream_profile>().get_intrinsics();
+        auto color_intrin = color_profile.as<rs2::video_stream_profile>().get_intrinsics();
+        auto depth_extrin_to_color = depth_profile.as<rs2::video_stream_profile>().get_extrinsics_to(color_profile);
+        auto color_extrin_to_depth = color_profile.as<rs2::video_stream_profile>().get_extrinsics_to(depth_profile);
+        if (!_box_received){
+            return;
+        }
+        float to_pixel[2];
+        float from_pixel[2];
+        from_pixel[0] = _bounding_box.xmin;
+        from_pixel[1] = _bounding_box.ymin;
+        ROS_WARN_STREAM("from_pixel[0]:"<<from_pixel[0]<<" / from_pixel[1]:"<<from_pixel[1]);
+        rs2_project_color_pixel_to_depth_pixel(to_pixel, reinterpret_cast<const uint16_t*>(depth.get_data()), depth_scale, 0.1, 100,
+                &depth_intrin, &color_intrin,
+                &color_extrin_to_depth, &depth_extrin_to_color, from_pixel);
+        auto xmin = static_cast<int>(to_pixel[0]);
+        auto ymin = static_cast<int>(to_pixel[1]);
+        from_pixel[0] = _bounding_box.xmax;
+        from_pixel[1] = _bounding_box.ymax;
+        rs2_project_color_pixel_to_depth_pixel(to_pixel, reinterpret_cast<const uint16_t*>(depth.get_data()), depth_scale, 0.1, 100,
+                &depth_intrin, &color_intrin,
+                &color_extrin_to_depth, &depth_extrin_to_color, from_pixel);
+        auto xmax = static_cast<int>(to_pixel[0]);
+        auto ymax = static_cast<int>(to_pixel[1]);
+        ROS_WARN_STREAM("xmin:"<<xmin<<" / ymin:"<<ymin<<"; xmax:"<<xmax<<" / ymax:"<<ymax);
+        for (int i = xmin; i <= xmax; i++)
 			{
-				for (int j = 180; j <= 300; j++)
+				for (int j = ymin; j <= ymax; j++)
 				{
                     auto ptr = (uint8_t*)color.get_data();
                     auto stride = color.as<rs2::video_frame>().get_stride_in_bytes();
@@ -1619,7 +1658,7 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                 {
                     if (0 != _pointcloud_publisher.getNumSubscribers())
                     {
-                        ROS_DEBUG("Publish pointscloud");
+                        // ROS_DEBUG("Publish pointscloud");
                         publishPointCloud(f.as<rs2::points>(), t, frameset);
                     }
                     continue;

@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
     tf
     ddynamic_reconfigure
     diagnostic_updater
+    darknet_ros_msgs
     )
 
 if(BUILD_WITH_OPENMP)
@@ -63,6 +64,7 @@ generate_messages(
     DEPENDENCIES
     sensor_msgs
     std_msgs
+    darknet_ros_msgs
     )
 
 set(CMAKE_NO_SYSTEM_FROM_IMPORTED true)
