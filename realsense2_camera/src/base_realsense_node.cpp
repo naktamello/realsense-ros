@@ -6,6 +6,10 @@
 #include <mutex>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <pcl/segmentation/extract_clusters.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/search/impl/search.hpp>
+#include <pcl/common/impl/centroid.hpp>
 
 using namespace realsense2_camera;
 using namespace ddynamic_reconfigure;
@@ -1468,12 +1472,19 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
         float upoint[3];
         float udist;
         rs2_intrinsics intr = depth.get_profile().as<rs2::video_stream_profile>().get_intrinsics(); // Calibration data
-        pcl::PointCloud<pcl::PointXYZRGB> output;
+        // pcl::PointCloud<pcl::PointXYZRGB> output;
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr output(new pcl::PointCloud<pcl::PointXYZRGB>);
         pcl::PointXYZRGB tmp_point;
         rs2::depth_frame depth_frame_used_in_deprojection = depth;
-        if (!_box_received){
-            return;
-        }
+
+        pcl::search::KdTree<pcl::PointXYZRGB>::Ptr search_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+        std::vector<pcl::PointIndices> cluster_indices;
+        pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
+        ec.setClusterTolerance (0.02); // 2cm
+        ec.setMinClusterSize (100);
+        ec.setMaxClusterSize (25000);
+        ec.setSearchMethod (search_tree);
+
 
         auto xmin = _bounding_box.xmin;
         auto ymin = _bounding_box.ymin;
@@ -1502,22 +1513,56 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
                         tmp_point.r = int(ptr[j * stride + (3*i)]);
                         tmp_point.g = int(ptr[j * stride + (3*i)+1]);
                         tmp_point.b = int(ptr[j * stride + (3*i)+2]);
-                        output.push_back(tmp_point);
+                        (*output).push_back(tmp_point);
                     }
                 }
+            ec.setInputCloud (output);
+            ec.extract (cluster_indices);
+            int num_pts;
+            std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> clusters;
+            for (auto & single_indices : cluster_indices)
+            {
+                num_pts = 0;
+                pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
+                for (int & pt_idx : single_indices.indices){
+                    pcl::PointXYZRGB pt = (*output)[pt_idx];
+                    cloud_cluster->push_back(pt);
+                    num_pts++;
+                }
+                pcl::PointXYZ centroid;
+                pcl::computeCentroid<pcl::PointXYZRGB, pcl::PointXYZ>(*cloud_cluster, centroid);
+                double dis = sqrt(pow(centroid.x,2) + pow(centroid.y,2) + pow(centroid.z,2));
+                if ((dis > 0.08) && (dis<0.65)){
+                    int avg_r= 0.0;
+                    int avg_g= 0.0;
+                    int avg_b = 0.0;
+                    for (auto &point: *cloud_cluster){
+                        avg_r += point.r;
+                        avg_g += point.g;
+                        avg_b += point.b;
+                    }
+                    auto size = (*cloud_cluster).size();
+                    avg_r /= size;
+                    avg_g /= size;
+                    avg_b /= size;
+                    if ((avg_r/avg_g) > 3 && (avg_r/avg_b)>3){
+                        clusters.push_back(cloud_cluster);
+                        std::cout << "VALID CLUSTER:" << size << std::endl;
+                    }
+                }
+            }
+            if (clusters.size() == 1){
+                pcl::toROSMsg( *clusters[0], _cropped_pointcloud );
+                _cropped_pointcloud.header.stamp = t;
+                _cropped_pointcloud.header.frame_id = _optical_frame_id[DEPTH];
+                _cropped_pointcloud.height = 1;
+                _cropped_pointcloud.is_dense = true;
+                _cropped_publisher.publish(_cropped_pointcloud);
+            }
         }
         catch (...){
 
         }
-        pcl::toROSMsg( output, _cropped_pointcloud );
-        _cropped_pointcloud.header.stamp = t;
-        _cropped_pointcloud.header.frame_id = _optical_frame_id[DEPTH];
-        _cropped_pointcloud.height = 1;
-        _cropped_pointcloud.is_dense = true;
-        // sensor_msgs::PointCloud2Modifier modifier(_cropped_pointcloud);
-        // modifier.setPointCloud2FieldsByString(1, "xyz");
-        _cropped_publisher.publish(_cropped_pointcloud);
-
 }
 
 void BaseRealSenseNode::frame_callback(rs2::frame frame)
@@ -1628,18 +1673,22 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
                     is_depth_arrived = true;
                 }
             }
-            rs2::stream_profile depth_profile;
-            rs2::stream_profile color_profile;
-            depth_profile = depth_frame.get_profile();
-            color_profile = frameset.get_color_frame().get_profile();
-            auto color_extrin_to_depth = color_profile.as<rs2::video_stream_profile>().get_extrinsics_to(depth_profile);
-            // auto depth_extrin_to_color = depth_profile.as<rs2::video_stream_profile>().get_extrinsics_to(color_profile);
-            // rs2::align align_to_depth(RS2_STREAM_DEPTH);
-            rs2::align align_to_color(RS2_STREAM_COLOR);
-            auto aligned = align_to_color.process(frameset);
-            rs2::frame depth = aligned.get_depth_frame();
-            rs2::frame color = aligned.get_color_frame();
-            publishCropped(depth, color, t, &color_extrin_to_depth);
+            if (_box_received)
+            {
+                rs2::stream_profile depth_profile;
+                rs2::stream_profile color_profile;
+                depth_profile = depth_frame.get_profile();
+                color_profile = frameset.get_color_frame().get_profile();
+                auto color_extrin_to_depth = color_profile.as<rs2::video_stream_profile>().get_extrinsics_to(depth_profile);
+                // auto depth_extrin_to_color = depth_profile.as<rs2::video_stream_profile>().get_extrinsics_to(color_profile);
+                // rs2::align align_to_depth(RS2_STREAM_DEPTH);
+                rs2::align align_to_color(RS2_STREAM_COLOR);
+                auto aligned = align_to_color.process(frameset);
+                rs2::frame depth = aligned.get_depth_frame();
+                rs2::frame color = aligned.get_color_frame();
+                publishCropped(depth, color, t, &color_extrin_to_depth);
+                _box_received = false;
+            }
             for (auto it = frames_to_publish.begin(); it != frames_to_publish.end(); ++it)
             {
                 auto f = (*it);
