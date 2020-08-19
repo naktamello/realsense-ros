@@ -4,7 +4,7 @@ add_compile_options(-std=c++11)
 
 option(BUILD_WITH_OPENMP "Use OpenMP" OFF)
 option(SET_USER_BREAK_AT_STARTUP "Set user wait point in startup (for debug)" OFF)
-find_package(PCL 1.8 REQUIRED COMPONENTS core features segmentation sample_consensus filters io surface search)
+find_package(PCL 1.9 REQUIRED COMPONENTS core features segmentation sample_consensus filters io surface search)
 find_package(catkin REQUIRED COMPONENTS
     message_generation
     nav_msgs
