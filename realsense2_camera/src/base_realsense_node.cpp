@@ -9,7 +9,11 @@
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/search/impl/search.hpp>
+#include <pcl/search/impl/flann_search.hpp>
+#include <Eigen/Core>
 #include <pcl/common/impl/centroid.hpp>
+#include <pcl/filters/impl/crop_box.hpp>
+#include <pcl/filters/impl/voxel_grid.hpp>
 
 using namespace realsense2_camera;
 using namespace ddynamic_reconfigure;
@@ -1472,17 +1476,18 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
         float upoint[3];
         float udist;
         rs2_intrinsics intr = depth.get_profile().as<rs2::video_stream_profile>().get_intrinsics(); // Calibration data
-        // pcl::PointCloud<pcl::PointXYZRGB> output;
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr output(new pcl::PointCloud<pcl::PointXYZRGB>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr raw_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered1(new pcl::PointCloud<pcl::PointXYZRGB>);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered2(new pcl::PointCloud<pcl::PointXYZRGB>);
         pcl::PointXYZRGB tmp_point;
         rs2::depth_frame depth_frame_used_in_deprojection = depth;
 
-        pcl::search::KdTree<pcl::PointXYZRGB>::Ptr search_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+        pcl::search::FlannSearch<pcl::PointXYZRGB>::Ptr search_tree(new pcl::search::FlannSearch<pcl::PointXYZRGB>);
         std::vector<pcl::PointIndices> cluster_indices;
         pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
-        ec.setClusterTolerance (0.02); // 2cm
-        ec.setMinClusterSize (100);
-        ec.setMaxClusterSize (25000);
+        ec.setClusterTolerance (0.005); // 2cm
+        ec.setMinClusterSize (80);
+        ec.setMaxClusterSize (10000);
         ec.setSearchMethod (search_tree);
 
 
@@ -1513,11 +1518,25 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
                         tmp_point.r = int(ptr[j * stride + (3*i)]);
                         tmp_point.g = int(ptr[j * stride + (3*i)+1]);
                         tmp_point.b = int(ptr[j * stride + (3*i)+2]);
-                        (*output).push_back(tmp_point);
+                        (*raw_cloud).push_back(tmp_point);
                     }
                 }
-            ec.setInputCloud (output);
+
+            pcl::CropBox<pcl::PointXYZRGB> boxFilter(true);
+            boxFilter.setMin(Eigen::Vector4f(-0.5, -0.5, 0.08, 1.0));
+            boxFilter.setMax(Eigen::Vector4f(0.5, 0.5, 0.65, 1.0));
+            boxFilter.setInputCloud(raw_cloud);
+            boxFilter.filter(*filtered1);
+
+            pcl::VoxelGrid<pcl::PointXYZRGB> vg;
+            vg.setInputCloud(filtered1);
+            vg.setLeafSize(0.005f, 0.005f, 0.005f);
+            vg.filter(*filtered2);
+
+            ec.setInputCloud (filtered2);
             ec.extract (cluster_indices);
+
+
             int num_pts;
             std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> clusters;
             for (auto & single_indices : cluster_indices)
@@ -1525,31 +1544,30 @@ void BaseRealSenseNode::publishCropped(rs2::frame depth, rs2::frame color, const
                 num_pts = 0;
                 pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZRGB>);
                 for (int & pt_idx : single_indices.indices){
-                    pcl::PointXYZRGB pt = (*output)[pt_idx];
+                    pcl::PointXYZRGB pt = (*filtered2)[pt_idx];
                     cloud_cluster->push_back(pt);
                     num_pts++;
                 }
                 pcl::PointXYZ centroid;
                 pcl::computeCentroid<pcl::PointXYZRGB, pcl::PointXYZ>(*cloud_cluster, centroid);
                 double dis = sqrt(pow(centroid.x,2) + pow(centroid.y,2) + pow(centroid.z,2));
-                if ((dis > 0.08) && (dis<0.65)){
-                    int avg_r= 0.0;
-                    int avg_g= 0.0;
-                    int avg_b = 0.0;
+
+                    float avg_r= 0.0;
+                    float avg_g= 0.0;
+                    float avg_b = 0.0;
                     for (auto &point: *cloud_cluster){
-                        avg_r += point.r;
-                        avg_g += point.g;
-                        avg_b += point.b;
+                        avg_r += static_cast<float>(point.r);
+                        avg_g += static_cast<float>(point.g);
+                        avg_b += static_cast<float>(point.b);
                     }
                     auto size = (*cloud_cluster).size();
                     avg_r /= size;
                     avg_g /= size;
                     avg_b /= size;
-                    if ((avg_r/avg_g) > 3 && (avg_r/avg_b)>3){
+                    if ((avg_r/avg_g) > 1.5 && (avg_r/avg_b)>1.5){
                         clusters.push_back(cloud_cluster);
                         std::cout << "VALID CLUSTER:" << size << std::endl;
                     }
-                }
             }
             if (clusters.size() == 1){
                 pcl::toROSMsg( *clusters[0], _cropped_pointcloud );
